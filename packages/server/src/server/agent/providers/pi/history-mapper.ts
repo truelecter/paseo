@@ -1,4 +1,4 @@
-import { mapCustomMessageToToolCall } from "../custom-message.js";
+import { mapCustomMessageToTimelineItem } from "../custom-message.js";
 import type { AgentStreamEvent, AgentTimelineItem, ToolCallDetail } from "../../agent-sdk-types.js";
 import {
   createPiExtensionHost,
@@ -140,7 +140,7 @@ export class PiHistoryMapper {
             {
               type: "timeline",
               provider: this.provider,
-              item: mapCustomMessageToToolCall(
+              item: mapCustomMessageToTimelineItem(
                 message,
                 text,
                 `${this.provider}-custom-${++this.customIndex}`,

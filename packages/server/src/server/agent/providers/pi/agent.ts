@@ -1,4 +1,4 @@
-import { mapCustomMessageToToolCall } from "../custom-message.js";
+import { mapCustomMessageToTimelineItem } from "../custom-message.js";
 import { randomUUID } from "node:crypto";
 import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { homedir, tmpdir } from "node:os";
@@ -2374,7 +2374,7 @@ export class PiRpcAgentSession implements AgentSession {
           type: "timeline",
           provider: this.provider,
           turnId,
-          item: mapCustomMessageToToolCall(
+          item: mapCustomMessageToTimelineItem(
             event.message,
             text,
             `${this.provider}-custom-${randomUUID()}`,

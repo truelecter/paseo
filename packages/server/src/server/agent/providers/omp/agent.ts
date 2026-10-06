@@ -1,4 +1,4 @@
-import { mapCustomMessageToToolCall } from "../custom-message.js";
+import { mapCustomMessageToTimelineItem } from "../custom-message.js";
 import { randomUUID } from "node:crypto";
 import { existsSync } from "node:fs";
 import { homedir } from "node:os";
@@ -2027,7 +2027,8 @@ export class OmpAgentSession implements AgentSession {
             provider: this.provider,
             turnId,
             item:
-              item ?? mapCustomMessageToToolCall(event.message, text, `omp-custom-${randomUUID()}`),
+              item ??
+              mapCustomMessageToTimelineItem(event.message, text, `omp-custom-${randomUUID()}`),
           });
         }
       }

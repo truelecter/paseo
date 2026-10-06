@@ -702,6 +702,46 @@ describe("OMP agent client and session", () => {
     expect(omp.completedTurnCount()).toBe(1);
   });
 
+  test("shows custom messages as assistant replies only when the extension asks for it", async () => {
+    const omp = new OmpHarness();
+    await omp.start();
+    await omp.requireStartTurn("Explain the options");
+    omp.runtime().beginTurn();
+    for (const [text, details] of [
+      ["## Options\n\n- **A**", { paseo: { render: "assistant" } }],
+      ["## More\n\n- **B**", { paseo: { render: "assistant" } }],
+      ["Peer says hi", { from: "worker-1" }],
+    ] as const) {
+      omp.emit({
+        type: "message_end",
+        message: {
+          role: "custom",
+          customType: "say",
+          content: text,
+          details,
+          display: true,
+          attribution: "agent",
+        },
+      });
+    }
+    const items = omp.timeline();
+    expect(items).toEqual([
+      {
+        type: "assistant_message",
+        text: "## Options\n\n- **A**",
+        messageId: expect.stringMatching(/^omp-custom-/),
+      },
+      {
+        type: "assistant_message",
+        text: "## More\n\n- **B**",
+        messageId: expect.stringMatching(/^omp-custom-/),
+      },
+      expect.objectContaining({ type: "tool_call", name: "say", status: "completed" }),
+    ]);
+    const ids = items.map((item) => (item.type === "assistant_message" ? item.messageId : null));
+    expect(ids[0]).not.toBe(ids[1]);
+  });
+
   test("omits live custom messages when display is false", async () => {
     const omp = new OmpHarness();
     await omp.start();

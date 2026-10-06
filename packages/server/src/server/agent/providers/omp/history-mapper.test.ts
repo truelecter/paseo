@@ -567,6 +567,42 @@ describe("OMP history mapper", () => {
     ]);
   });
 
+  test("replays custom messages as assistant replies only when the extension asks for it", async () => {
+    await expect(
+      collectHistory([
+        {
+          role: "custom",
+          customType: "say",
+          content: "## Options",
+          details: { paseo: { render: "assistant" } },
+          display: true,
+          attribution: "agent",
+          id: "say-1",
+        },
+        {
+          role: "custom",
+          customType: "irc:incoming",
+          content: "Peer says hi",
+          details: { from: "worker-1" },
+          display: true,
+          attribution: "agent",
+          id: "irc-1",
+        },
+      ]),
+    ).resolves.toEqual([
+      {
+        type: "timeline",
+        provider: "omp",
+        item: { type: "assistant_message", text: "## Options", messageId: "omp-custom-say-1" },
+      },
+      {
+        type: "timeline",
+        provider: "omp",
+        item: expect.objectContaining({ type: "tool_call", name: "irc:incoming" }),
+      },
+    ]);
+  });
+
   test("suppresses replayed raw todo tool calls through the OMP detail hook", async () => {
     await expect(
       collectHistory([
