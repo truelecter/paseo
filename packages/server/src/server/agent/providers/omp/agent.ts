@@ -1,5 +1,4 @@
 import type { ProviderOptions } from "@getpaseo/protocol/agent-types";
-import { mapCustomMessageToToolCall } from "../custom-message.js";
 import { randomUUID } from "node:crypto";
 import { existsSync } from "node:fs";
 import { homedir } from "node:os";
@@ -75,7 +74,11 @@ export { formatOmpVersionSupport, resolveOmpDiagnosticPaths } from "./provider-c
 import { applyProviderOptionsPatch } from "../../option-controls.js";
 import { assertChangesAreLive, validateProviderOptions } from "../../provider-options.js";
 import { OmpSubagentCardTracker } from "./subagent-card-tracker.js";
-import { ompSkillPromptUserText, shouldDisplayOmpCustomMessage } from "./custom-message.js";
+import {
+  ompCustomMessageId,
+  ompSkillPromptUserText,
+  shouldDisplayOmpCustomMessage,
+} from "./custom-message.js";
 import { getUserMessageText } from "./message-history.js";
 import { mapOmpSystemNoticeToNotification } from "./system-notice.js";
 import { materializeProviderImage } from "../provider-image-output.js";
@@ -707,6 +710,7 @@ export class OmpAgentSession implements AgentSession {
   private closed = false;
   private live: boolean;
   private readonly emittedUserMessageIds = new Set<string>();
+  private customMessageIndex = 0;
 
   private readonly usageSessionKey = randomUUID();
 
@@ -2071,8 +2075,14 @@ export class OmpAgentSession implements AgentSession {
             type: "timeline",
             provider: this.provider,
             turnId,
-            item:
-              item ?? mapCustomMessageToToolCall(event.message, text, `omp-custom-${randomUUID()}`),
+            item: item ?? {
+              type: "assistant_message",
+              text,
+              messageId: ompCustomMessageId(event.message, () => {
+                this.customMessageIndex += 1;
+                return this.customMessageIndex;
+              }),
+            },
           });
         }
       }
