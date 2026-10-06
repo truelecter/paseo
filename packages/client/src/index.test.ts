@@ -973,6 +973,64 @@ test("agent handles list the session's own commands through the existing daemon 
   await client.close();
 });
 
+test("agent handles rewind to a user message through the existing daemon RPC", async () => {
+  const { client, ws } = await connectClient({ rewind: true });
+  const agent = client.agents.ref("agent_sdk");
+
+  const rewindPromise = agent.rewind("user-message-2", "conversation");
+  const request = parseSentSessionMessage(ws.sent.at(-1));
+  expect(request).toEqual({
+    type: "agent.rewind.request",
+    agentId: "agent_sdk",
+    messageId: "user-message-2",
+    mode: "conversation",
+    requestId: expect.any(String),
+  });
+
+  ws.message(
+    sessionMessage({
+      type: "agent.rewind.response",
+      payload: { requestId: request.requestId, agentId: "agent_sdk", ok: true, error: null },
+    }),
+  );
+
+  await expect(rewindPromise).resolves.toBeUndefined();
+  await client.close();
+});
+
+test("agent rewind rejects with the daemon's error", async () => {
+  const { client, ws } = await connectClient({ rewind: true });
+  const agent = client.agents.ref("agent_sdk");
+
+  const rewindPromise = agent.rewind("user-message-2", "files");
+  const request = parseSentSessionMessage(ws.sent.at(-1));
+  ws.message(
+    sessionMessage({
+      type: "agent.rewind.response",
+      payload: {
+        requestId: request.requestId,
+        agentId: "agent_sdk",
+        ok: false,
+        error: "Provider does not support rewinding files",
+      },
+    }),
+  );
+
+  await expect(rewindPromise).rejects.toThrow("Provider does not support rewinding files");
+  await client.close();
+});
+
+test("agent rewind asks for a host update without sending when the host lacks rewind", async () => {
+  const { client, ws } = await connectClient();
+  const sentBefore = ws.sent.length;
+
+  await expect(
+    client.agents.ref("agent_sdk").rewind("user-message-2", "conversation"),
+  ).rejects.toThrow("Update the host to rewind agents.");
+  expect(ws.sent).toHaveLength(sentBefore);
+  await client.close();
+});
+
 test("agent handles expose the observed snapshot through readonly properties", async () => {
   const { client, ws } = await connectClient();
   const agent = client.agents.ref("agent_sdk");

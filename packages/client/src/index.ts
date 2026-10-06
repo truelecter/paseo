@@ -296,6 +296,9 @@ export interface PaseoAgentCommandsOptions {
 
 export type PaseoAgentCommandsResult = ListCommandsResponse["payload"];
 
+/** Must be one of the modes the agent's `capabilities` advertise. */
+export type PaseoAgentRewindMode = "conversation" | "files" | "both";
+
 export type PaseoAgentUpdate = Extract<SessionOutboundMessage, { type: "agent_update" }>["payload"];
 
 export type PaseoAgentStream = Extract<SessionOutboundMessage, { type: "agent_stream" }>["payload"];
@@ -376,6 +379,11 @@ export interface PaseoAgentHandle {
   commands(options?: PaseoAgentCommandsOptions): Promise<PaseoAgentCommandsResult>;
   archive(): Promise<{ archivedAt: string }>;
   detach(): Promise<void>;
+  /**
+   * Rewinds the agent to the user message `messageId`, removing it and every
+   * turn after it. `"files"` and `"both"` also revert file changes.
+   */
+  rewind(messageId: string, mode: PaseoAgentRewindMode): Promise<void>;
   subscribe(handler: (update: PaseoAgentUpdate) => void): () => void;
 }
 
@@ -975,6 +983,13 @@ function createAgentHandleFactory(
       },
       detach: async () => {
         await daemonClient.detachAgent(id);
+      },
+      rewind: async (messageId, mode) => {
+        // COMPAT(rewind): added in v0.1.X, drop the gate when floor >= v0.1.X.
+        if (daemonClient.getLastServerInfoMessage()?.features?.rewind !== true) {
+          throw new Error("Update the host to rewind agents.");
+        }
+        await daemonClient.rewindAgent(id, messageId, mode);
       },
       subscribe: (handler) =>
         listen((update) => {

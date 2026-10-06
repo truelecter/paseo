@@ -182,6 +182,19 @@ The answer comes from the running session, not from a directory scan, so it incl
 
 A provider that cannot produce a list reports that in `error` and returns an empty `commands` array. The call does not reject.
 
+## Rewind to a prompt
+
+```ts
+await agent.refresh();
+if (agent.capabilities?.supportsRewindConversation) {
+  await agent.rewind(userMessageId, "conversation");
+}
+```
+
+`rewind(messageId, mode)` is the operation behind the app's Rewind menu. `messageId` is the `messageId` of a `user_message` timeline item. `"conversation"` removes that message and every turn after it, `"files"` reverts the file changes made since it and keeps the conversation, and `"both"` does both. A running turn is cancelled first. Pass only a mode the agent's `capabilities` advertise (`supportsRewindConversation`, `supportsRewindFiles`, `supportsRewindBoth`); the daemon rejects any other.
+
+The call resolves once the provider has rewound. A `"conversation"` or `"both"` rewind replaces the timeline, so timeline subscribers get a `replacement` event and should refetch.
+
 ## Archive or detach
 
 ```ts
