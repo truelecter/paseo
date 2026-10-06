@@ -1,4 +1,3 @@
-import { mapCustomMessageToToolCall } from "../custom-message.js";
 import type { AgentStreamEvent, AgentTimelineItem, ToolCallDetail } from "../../agent-sdk-types.js";
 import type { OmpAgentMessage, OmpImageContent, OmpTextContent } from "./rpc-types.js";
 import type { OmpBridgedToolIdentity } from "./mcp-bridge.js";
@@ -156,7 +155,7 @@ export class OmpHistoryMapper {
       {
         type: "timeline",
         provider: this.provider,
-        item: mapCustomMessageToToolCall(message, text, messageId),
+        item: { type: "assistant_message", text, messageId },
       },
     ];
   }
