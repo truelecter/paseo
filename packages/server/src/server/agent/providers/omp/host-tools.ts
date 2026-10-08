@@ -30,12 +30,17 @@ interface OmpHostToolRouterInput {
   logger: Logger;
 }
 
+// OMP mounts discoverable tools under `xd://` when `tools.xdev` is on: the prompt carries one
+// catalog line per tool and the schema is read on first use, instead of every schema on every
+// request. Only tools an agent needs on most turns stay top-level.
+const OMP_ESSENTIAL_HOST_TOOLS: Record<string, true> = { update_agent: true, speak: true };
+
 export function serializeOmpHostTools(catalog: PaseoToolCatalog): OmpRpcHostToolDefinition[] {
   return [...catalog.tools.values()].map((tool) => {
     const definition: OmpRpcHostToolDefinition = {
       name: tool.name,
       description: tool.description,
-      loadMode: "essential",
+      loadMode: Object.hasOwn(OMP_ESSENTIAL_HOST_TOOLS, tool.name) ? "essential" : "discoverable",
       parameters: serializePaseoToolInputParameters(tool),
     };
     if (tool.title) {
