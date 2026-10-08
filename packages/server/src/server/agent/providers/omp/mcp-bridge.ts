@@ -61,7 +61,8 @@ export class OmpMcpBridge {
           name,
           label: `${serverName} / ${tool.name}`,
           description: tool.description || `${tool.name} from ${serverName}`,
-          loadMode: "essential",
+          // Like OMP's own MCP tools: mounted under `xd://`, schema read on first use.
+          loadMode: "discoverable",
           parameters: tool.inputSchema,
         });
       }
