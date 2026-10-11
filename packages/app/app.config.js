@@ -3,6 +3,7 @@ const path = require("node:path");
 const pkg = require("./package.json");
 const withAndroidAsyncStorageSize = require("./plugins/with-android-async-storage-size");
 const withAndroidProfileable = require("./plugins/with-android-profileable");
+const withAndroidReleaseSigning = require("./plugins/with-android-release-signing");
 const withFdroidAutolinking = require("./plugins/with-fdroid-autolinking");
 const withPasteInput = require("./plugins/with-paste-input");
 const withAndroidScroll = require("./modules/paseo-scroll/app.plugin");
@@ -90,16 +91,63 @@ const variants = {
       fallbackRelativePath: "./.secrets/GoogleService-Info.debug.plist",
     }),
   },
+  // Fork build for Obtainium: own package, Firebase app, and Expo project so push works next to
+  // the official app. Release builds sign with the keystore from PASEO_ANDROID_KEYSTORE_*.
+  tlctr: {
+    name: "Paseo (tlctr)",
+    packageId: "sh.paseo.tlctr",
+    googleServicesFile: resolveSecretFile({
+      envKey: "GOOGLE_SERVICES_FILE_TLCTR",
+      fallbackRelativePath: "./.secrets/google-services.tlctr.json",
+    }),
+    googleServiceInfoPlist: undefined,
+    expoProject: {
+      slug: "paseo",
+      owner: "trlctr",
+      projectId: "5c3c8e24-3dcb-4259-9a5a-d1434721c747",
+    },
+    releaseSigning: true,
+    forkBuildNumber: true,
+  },
 };
 
 const variant = variants[appVariant] ?? variants.production;
+const expoProject = variant.expoProject ?? {
+  slug: "voice-mobile",
+  owner: "getpaseo",
+  projectId: "0e7f65ce-0367-46c8-a238-2b65963d235a",
+};
 const nativeReleaseVersion = getNativeReleaseVersion(pkg.version);
+
+// Each fork build of one upstream version gets its own versionName (`0.11.2-tlctr.3`) and a larger
+// versionCode, so Obtainium sees an update and Android installs it over the last build. The
+// workflow sets PASEO_TLCTR_BUILD (1-99, counted per upstream version); local builds are 0.
+// The app's own version checks read package.json, not these native fields.
+function withForkBuildNumber(release) {
+  const raw = process.env.PASEO_TLCTR_BUILD ?? "0";
+  const build = Number(raw);
+  if (!Number.isInteger(build) || build < 0 || build > 99) {
+    throw new Error(`PASEO_TLCTR_BUILD must be an integer from 0 to 99, got: ${raw}`);
+  }
+  const androidVersionCode = release.androidVersionCode * 100 + build;
+  if (androidVersionCode > 2_100_000_000) {
+    throw new Error(`Fork versionCode is out of range: ${androidVersionCode}`);
+  }
+  return {
+    ...release,
+    appVersion: `${release.appVersion}-tlctr.${build}`,
+    androidVersionCode,
+  };
+}
+const appRelease = variant.forkBuildNumber
+  ? withForkBuildNumber(nativeReleaseVersion)
+  : nativeReleaseVersion;
 
 export default {
   expo: {
     name: variant.name,
-    slug: "voice-mobile",
-    version: nativeReleaseVersion.appVersion,
+    slug: expoProject.slug,
+    version: appRelease.appVersion,
     orientation: "portrait",
     icon: "./assets/images/icon.png",
     scheme: "paseo",
@@ -129,7 +177,7 @@ export default {
       usesCleartextTraffic: true,
       permissions: buildProfile.androidPermissions,
       package: variant.packageId,
-      versionCode: nativeReleaseVersion.androidVersionCode,
+      versionCode: appRelease.androidVersionCode,
       ...(variant.googleServicesFile ? { googleServicesFile: variant.googleServicesFile } : {}),
     },
     web: {
@@ -179,6 +227,7 @@ export default {
       ],
       ...buildProfile.fdroidPlugins,
       ...(isProfileBuild ? [withAndroidProfileable] : []),
+      ...(variant.releaseSigning ? [withAndroidReleaseSigning] : []),
     ],
     experiments: {
       typedRoutes: true,
@@ -190,9 +239,9 @@ export default {
       profileBuild: isProfileBuild,
       router: {},
       eas: {
-        projectId: "0e7f65ce-0367-46c8-a238-2b65963d235a",
+        projectId: expoProject.projectId,
       },
     },
-    owner: "getpaseo",
+    owner: expoProject.owner,
   },
 };

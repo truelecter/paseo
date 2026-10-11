@@ -1,0 +1,108 @@
+name: Android APK (tlctr fork)
+
+# Builds the sh.paseo.tlctr variant of the app and publishes it as a GitHub release for Obtainium.
+# Fork only. Tags are <version>-tlctr.<build>, the same as the APK's versionName; upstream's tag
+# workflows only match v* and app-v* tags, and releases made with GITHUB_TOKEN start no workflows.
+
+on:
+  push:
+    branches: [local]
+  workflow_dispatch:
+
+concurrency:
+  group: android-tlctr-apk
+  cancel-in-progress: true
+
+permissions:
+  contents: write
+
+jobs:
+  apk:
+    if: github.repository == 'truelecter/paseo'
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    env:
+      APP_VARIANT: tlctr
+    steps:
+      # The release build (native modules, Kotlin, Hermes) needs more memory and disk than the
+      # runner has free; without this the runner itself was shut down mid-build.
+      - name: Free disk space and add swap
+        run: |
+          sudo rm -rf /usr/share/dotnet /usr/local/lib/android/sdk/ndk/2[0-6]* /opt/ghc /usr/local/.ghcup /opt/hostedtoolcache/CodeQL
+          sudo swapoff -a || true
+          sudo fallocate -l 12G /mnt/swapfile
+          sudo chmod 600 /mnt/swapfile
+          sudo mkswap /mnt/swapfile
+          sudo swapon /mnt/swapfile
+          df -h / /mnt
+          free -h
+
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: "npm"
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "21"
+
+      - uses: gradle/actions/setup-gradle@v4
+
+      - name: Install JS dependencies
+        run: node scripts/npm-retry.mjs ci
+
+      - name: Build app dependencies
+        run: |
+          npm run build:app-deps
+          npm run build:terminal-webview --workspace=@getpaseo/app
+
+      - name: Write signing and Firebase files
+        env:
+          GOOGLE_SERVICES_JSON: ${{ secrets.PASEO_GOOGLE_SERVICES_JSON }}
+          ANDROID_KEYSTORE: ${{ secrets.PASEO_ANDROID_KEYSTORE }}
+        run: |
+          set -euo pipefail
+          umask 077
+          printf '%s' "$GOOGLE_SERVICES_JSON" | base64 -d > "$RUNNER_TEMP/google-services.json"
+          printf '%s' "$ANDROID_KEYSTORE" | base64 -d > "$RUNNER_TEMP/release.jks"
+          echo "GOOGLE_SERVICES_FILE_TLCTR=$RUNNER_TEMP/google-services.json" >> "$GITHUB_ENV"
+          echo "PASEO_ANDROID_KEYSTORE_FILE=$RUNNER_TEMP/release.jks" >> "$GITHUB_ENV"
+
+      - name: Pick the build number
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          version="$(node -p 'require("./packages/app/package.json").version')"
+          last="$(gh release list --repo "$GITHUB_REPOSITORY" --limit 1000 --json tagName --jq '.[].tagName' \
+            | grep -E "^${version//./\\.}-tlctr\.[0-9]+$" | sed 's/.*-tlctr\.//' | sort -n | tail -n 1 || true)"
+          build=$(( ${last:-0} + 1 ))
+          echo "PASEO_TLCTR_BUILD=$build" >> "$GITHUB_ENV"
+          echo "TLCTR_VERSION=${version}-tlctr.${build}" >> "$GITHUB_ENV"
+
+      - name: Prebuild
+        working-directory: packages/app
+        run: npx expo prebuild --platform android --clean --non-interactive
+
+      - name: Build release APK
+        working-directory: packages/app/android
+        env:
+          PASEO_ANDROID_KEYSTORE_PASSWORD: ${{ secrets.PASEO_ANDROID_KEYSTORE_PASSWORD }}
+        run: ./gradlew :app:assembleRelease -PreactNativeArchitectures=arm64-v8a --max-workers=2 --console=plain
+
+      - name: Publish release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          apk="$RUNNER_TEMP/paseo-${TLCTR_VERSION}-arm64.apk"
+          cp packages/app/android/app/build/outputs/apk/release/app-release.apk "$apk"
+          gh release create "$TLCTR_VERSION" "$apk" \
+            --repo "$GITHUB_REPOSITORY" \
+            --target "$GITHUB_SHA" \
+            --title "Paseo (tlctr) ${TLCTR_VERSION}" \
+            --notes "Built from \`local\` at ${GITHUB_SHA}." \
+            --latest
