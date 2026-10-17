@@ -85,6 +85,7 @@ import type {
   OmpModel,
   OmpRuntimeEvent,
   OmpSessionState,
+  OmpSubagentEventPayload,
   OmpThinkingLevel,
 } from "./rpc-types.js";
 import {
@@ -718,6 +719,8 @@ export class OmpAgentSession implements AgentSession {
   private manualCompactionRunning = false;
   private commandCache: AgentSlashCommand[] | null = null;
   private readonly subagentIndex = new OmpSubagentIndex();
+  // Subagent events map one at a time and emit in arrival order: user image recovery awaits.
+  private subagentEventDispatch: Promise<void> = Promise.resolve();
   private readonly subagentCardTracker: OmpSubagentCardTracker;
   private lastTodoItem: Extract<AgentTimelineItem, { type: "todo" }> | null = null;
   private state: OmpSessionState;
@@ -1699,9 +1702,12 @@ export class OmpAgentSession implements AgentSession {
     }
     if (event.type === "subagent_event") {
       const payload = (event as Extract<OmpRuntimeEvent, { type: "subagent_event" }>).payload;
-      for (const mapped of this.subagentIndex.handleEvent(this.runtimeSession, payload)) {
-        this.emit(mapped);
-      }
+      const session = this.runtimeSession;
+      this.subagentEventDispatch = this.subagentEventDispatch
+        .then(() => this.emitSubagentEvent(session, payload))
+        .catch((error: unknown) =>
+          this.logger.debug({ err: error }, "Dropped OMP subagent event after a mapping failure"),
+        );
       return true;
     }
     if (event.type === "todo_reminder") {
@@ -1739,6 +1745,12 @@ export class OmpAgentSession implements AgentSession {
       );
     }
     return true;
+  }
+
+  private async emitSubagentEvent(parent: object, payload: OmpSubagentEventPayload): Promise<void> {
+    for (const mapped of await this.subagentIndex.handleEvent(parent, payload)) {
+      this.emit(mapped);
+    }
   }
 
   private emitActiveToolCall(toolCallId: string): boolean {

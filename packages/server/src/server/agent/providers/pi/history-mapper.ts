@@ -1,5 +1,6 @@
 import { mapCustomMessageToToolCall } from "../custom-message.js";
 import type { AgentStreamEvent, AgentTimelineItem, ToolCallDetail } from "../../agent-sdk-types.js";
+import { userMessageImages } from "../user-message-images.js";
 import {
   createPiExtensionHost,
   type PiExtensionEventOutput,
@@ -71,13 +72,13 @@ export class PiHistoryMapper {
     private readonly extensionHost: PiExtensionHost = createPiExtensionHost(),
   ) {}
 
-  mapMessages(messages: readonly PiAgentMessage[]): AgentStreamEvent[] {
+  async mapMessages(messages: readonly PiAgentMessage[]): Promise<AgentStreamEvent[]> {
     const events: AgentStreamEvent[] = [];
 
     for (const message of messages) {
       switch (message.role) {
         case "user":
-          events.push(...this.mapUserMessage(message));
+          events.push(...(await this.mapUserMessage(message)));
           break;
         case "custom":
           events.push(...this.mapCustomMessage(message));
@@ -102,13 +103,16 @@ export class PiHistoryMapper {
     return (await Promise.all(this.hydrations)).flat();
   }
 
-  private mapUserMessage(message: Extract<PiAgentMessage, { role: "user" }>): AgentStreamEvent[] {
+  private async mapUserMessage(
+    message: Extract<PiAgentMessage, { role: "user" }>,
+  ): Promise<AgentStreamEvent[]> {
     const text = getUserMessageText(message.content);
+    const userEntry = this.userEntries[this.userIndex];
     this.userIndex += 1;
-    if (!text) {
+    const images = await userMessageImages(message.content);
+    if (!text && images.length === 0) {
       return [];
     }
-    const userEntry = this.userEntries[this.userIndex - 1];
     return [
       {
         type: "timeline",
@@ -117,6 +121,7 @@ export class PiHistoryMapper {
           type: "user_message",
           text,
           ...(userEntry ? { messageId: userEntry.id } : {}),
+          ...(images.length ? { images } : {}),
         },
       },
     ];
@@ -297,7 +302,7 @@ export async function* streamPiHistory(
   signal?: AbortSignal,
 ): AsyncGenerator<AgentStreamEvent> {
   const mapper = new PiHistoryMapper(provider, userEntries, hooks, extensionHost);
-  for (const event of mapper.mapMessages(messages)) {
+  for (const event of await mapper.mapMessages(messages)) {
     if (signal?.aborted) return;
     if (event) {
       yield event;

@@ -1,4 +1,5 @@
 import { validateProviderOptions } from "../provider-options.js";
+import { userMessageImages } from "./user-message-images.js";
 import {
   createOpencodeClient,
   type AssistantMessage as OpenCodeAssistantMessage,
@@ -1229,9 +1230,9 @@ async function readOpenCodeSessionMessagesFromSdk(
   return filterOpenCodeRevertedMessages(response.data, session.revert);
 }
 
-function buildOpenCodeSessionTimeline(
+async function buildOpenCodeSessionTimeline(
   messages: ReadonlyArray<OpenCodeSessionMessage>,
-): AgentTimelineItem[] {
+): Promise<AgentTimelineItem[]> {
   const timeline: AgentTimelineItem[] = [];
   let hideNextAssistantAfterCompaction = false;
 
@@ -1245,7 +1246,7 @@ function buildOpenCodeSessionTimeline(
       hideNextAssistantAfterCompaction = false;
     }
 
-    timeline.push(...buildOpenCodeReplayTimelineEvents(message).map((event) => event.item));
+    timeline.push(...(await buildOpenCodeReplayTimelineEvents(message)).map((event) => event.item));
 
     if (message.info.role === "user" && compactionPart) {
       timeline.push(
@@ -1310,9 +1311,9 @@ function readOpenCodeMessageModel(
   };
 }
 
-function buildOpenCodeReplayTimelineEvents(
+async function buildOpenCodeReplayTimelineEvents(
   message: OpenCodeSessionMessage,
-): Extract<AgentStreamEvent, { type: "timeline" }>[] {
+): Promise<Extract<AgentStreamEvent, { type: "timeline" }>[]> {
   const { info, parts } = message;
   if (isOpenCodeCompactionSummaryMessage(info)) {
     return [];
@@ -1325,11 +1326,16 @@ function buildOpenCodeReplayTimelineEvents(
       )
       .map((part) => part.text)
       .join("");
-
-    return text
+    const images = await userMessageImages(parts);
+    return text || images.length
       ? [
           buildOpenCodeReplayTimelineEvent({
-            item: { type: "user_message", text, messageId: info.id },
+            item: {
+              type: "user_message",
+              text,
+              messageId: info.id,
+              ...(images.length ? { images } : {}),
+            },
             message: info,
           }),
         ]
@@ -4295,7 +4301,7 @@ class OpenCodeAgentSession implements AgentSession {
         continue;
       }
       latestReplayedMessage = message;
-      for (const timelineEvent of buildOpenCodeReplayTimelineEvents(message)) {
+      for (const timelineEvent of await buildOpenCodeReplayTimelineEvents(message)) {
         const event: AgentStreamEvent = {
           type: "provider_subagent",
           provider: "opencode",
@@ -4927,7 +4933,7 @@ class OpenCodeAgentSession implements AgentSession {
       sessionResponse.error ? null : sessionResponse.data?.revert,
     );
     for (const message of messages) {
-      for (const event of buildOpenCodeReplayTimelineEvents(message)) {
+      for (const event of await buildOpenCodeReplayTimelineEvents(message)) {
         yield event;
       }
     }
