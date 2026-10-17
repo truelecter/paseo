@@ -100,6 +100,10 @@ buildNpmPackage {
     # Native deps (terminal emulation; libuv-linked on Linux)
     npm rebuild node-pty
 
+    # Dependency patches (patches/, applied by the root postinstall, which
+    # --ignore-scripts skipped)
+    npm run postinstall
+
     # Server workspaces (highlight + relay + protocol + client + server + cli)
     npm run build:server
 
