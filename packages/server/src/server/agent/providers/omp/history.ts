@@ -143,7 +143,7 @@ export async function* streamOmpHistory(input: {
         ? [{ type: "timeline", provider: input.provider, item: replayEntry.item }]
         : [
             ...turnCompleted(turns.observe(replayEntry.message)),
-            ...mapper.mapMessages([replayEntry.message]),
+            ...(await mapper.mapMessages([replayEntry.message])),
           ];
     for (const event of events) {
       yield timestamp && event.type === "timeline" ? { ...event, timestamp } : event;

@@ -1,4 +1,5 @@
 import type { AgentStreamEvent, AgentTimelineItem, ToolCallDetail } from "../../agent-sdk-types.js";
+import { userMessageImages } from "../user-message-images.js";
 import type { OmpAgentMessage, OmpImageContent, OmpTextContent } from "./rpc-types.js";
 import type { OmpBridgedToolIdentity } from "./mcp-bridge.js";
 import {
@@ -73,13 +74,13 @@ export class OmpHistoryMapper {
     private readonly bridgedTools: ReadonlyMap<string, OmpBridgedToolIdentity> = new Map(),
   ) {}
 
-  mapMessages(messages: readonly OmpAgentMessage[]): AgentStreamEvent[] {
+  async mapMessages(messages: readonly OmpAgentMessage[]): Promise<AgentStreamEvent[]> {
     const events: AgentStreamEvent[] = [];
 
     for (const message of messages) {
       switch (message.role) {
         case "user":
-          events.push(...this.mapUserMessage(message));
+          events.push(...(await this.mapUserMessage(message)));
           break;
         case "custom":
           events.push(...this.mapCustomMessage(message));
@@ -103,13 +104,16 @@ export class OmpHistoryMapper {
     return events;
   }
 
-  private mapUserMessage(message: Extract<OmpAgentMessage, { role: "user" }>): AgentStreamEvent[] {
+  private async mapUserMessage(
+    message: Extract<OmpAgentMessage, { role: "user" }>,
+  ): Promise<AgentStreamEvent[]> {
     const text = getUserMessageText(message.content);
+    const userEntry = this.userEntries[this.userIndex];
     this.userIndex += 1;
-    if (!text) {
+    const images = await userMessageImages(message.content);
+    if (!text && images.length === 0) {
       return [];
     }
-    const userEntry = this.userEntries[this.userIndex - 1];
     return [
       {
         type: "timeline",
@@ -118,6 +122,7 @@ export class OmpHistoryMapper {
           type: "user_message",
           text,
           ...(userEntry ? { messageId: userEntry.id } : {}),
+          ...(images.length ? { images } : {}),
         },
       },
     ];
@@ -286,7 +291,7 @@ export async function* streamOmpCoreHistory(
   hooks: OmpHistoryMapperHooks = {},
 ): AsyncGenerator<AgentStreamEvent> {
   const mapper = new OmpHistoryMapper(provider, userEntries, hooks);
-  for (const event of mapper.mapMessages(messages)) {
+  for (const event of await mapper.mapMessages(messages)) {
     if (event) {
       yield event;
     }
