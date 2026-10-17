@@ -1,5 +1,6 @@
 import { mapCustomMessageToToolCall } from "../custom-message.js";
 import type { AgentStreamEvent, AgentTimelineItem, ToolCallDetail } from "../../agent-sdk-types.js";
+import { userMessageImages } from "../user-message-images.js";
 import {
   createPiExtensionHost,
   type PiExtensionEventOutput,
@@ -104,8 +105,9 @@ export class PiHistoryMapper {
 
   private mapUserMessage(message: Extract<PiAgentMessage, { role: "user" }>): AgentStreamEvent[] {
     const text = getUserMessageText(message.content);
+    const images = userMessageImages(message.content);
     this.userIndex += 1;
-    if (!text) {
+    if (!text && images.length === 0) {
       return [];
     }
     const userEntry = this.userEntries[this.userIndex - 1];
@@ -117,6 +119,7 @@ export class PiHistoryMapper {
           type: "user_message",
           text,
           ...(userEntry ? { messageId: userEntry.id } : {}),
+          ...(images.length ? { images } : {}),
         },
       },
     ];
