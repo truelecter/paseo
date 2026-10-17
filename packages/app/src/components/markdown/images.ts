@@ -1,7 +1,7 @@
 import { Image } from "react-native";
 import { isWeb } from "@/constants/platform";
 import { useMemo, useEffect, useId } from "react";
-import { useFetchQueries } from "@/data/query";
+import { useFetchQueries, useFetchQuery } from "@/data/query";
 import { createAssistantImageFileAcquisition } from "@/assistant-image/file-acquisition";
 import {
   persistAttachmentFromBytes,
@@ -130,4 +130,60 @@ export function useMarkdownSource(text: string, context: MarkdownImageContext) {
     linkSource: prepared.linkSource,
     imageSources: Object.fromEntries([...resolved].map(([source, url]) => [url, source])),
   };
+}
+
+export type DaemonImage =
+  | { status: "pending" }
+  | { status: "unavailable" }
+  | { status: "direct"; uri: string }
+  | { status: "loaded"; attachment: AttachmentMetadata };
+
+/** One image the daemon refers to by path (or a direct URL), loaded like a Markdown image. */
+export function useDaemonImage(source: string, context: MarkdownImageContext): DaemonImage {
+  const occurrenceKey = useId();
+  const { client, workspaceRoot, serverId } = context;
+  const resolution = useMemo(
+    () => resolveAssistantImageSource({ source, workspaceRoot }),
+    [source, workspaceRoot],
+  );
+  const acquisition = useMemo(
+    () =>
+      createAssistantImageFileAcquisition({
+        port: client
+          ? {
+              readFile: (cwd, path) => client.readFile(cwd, path),
+              persist: persistAttachmentFromBytes,
+            }
+          : null,
+        resolution,
+        serverId,
+        occurrenceKey,
+        unavailableMessage: "Image unavailable",
+      }),
+    [client, resolution, serverId, occurrenceKey],
+  );
+  const result = useFetchQuery({
+    queryKey: ["markdownImage", acquisition?.key ?? source],
+    enabled: acquisition !== null,
+    immutableWhen: () => true,
+    dataShape: "value",
+    gcTime: 0,
+    queryFn: async () => {
+      if (!acquisition) throw new Error("No image acquisition");
+      return urls.acquire(acquisition.key, async () => {
+        const attachment = await acquisition.locate();
+        const uri = await resolveAttachmentPreviewUrl(attachment);
+        return { attachment, uri };
+      });
+    },
+  });
+  const value = result.data;
+  useEffect(() => {
+    if (!value || !acquisition) return;
+    return urls.acquireRetained(acquisition.key, async () => value).release;
+  }, [value, acquisition]);
+  if (resolution?.kind === "direct") return { status: "direct", uri: resolution.uri };
+  if (value) return { status: "loaded", attachment: value.attachment };
+  if (!acquisition || result.isError) return { status: "unavailable" };
+  return { status: "pending" };
 }
