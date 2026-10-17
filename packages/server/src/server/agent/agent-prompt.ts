@@ -351,6 +351,12 @@ export async function sendPromptToAgent(
     ? { ...params.runOptions, clientMessageId: delivery.messageId }
     : params.runOptions;
 
+  await params.agentManager.persistSubmittedPromptImages(
+    params.agentId,
+    delivery.prompt,
+    delivery.messageId,
+  );
+
   return await startAgentRun(params.agentManager, params.agentId, delivery.prompt, params.logger, {
     replaceRunning: true,
     onDispatch: params.onDispatch,
@@ -376,6 +382,12 @@ export async function startCreatedAgentInitialPrompt(
     params.prompt,
     await resolvePromptSource(params.source, params.agentManager, params.agentStorage),
     params.runOptions?.clientMessageId,
+  );
+
+  await params.agentManager.persistSubmittedPromptImages(
+    params.agentId,
+    delivery.prompt,
+    delivery.messageId,
   );
   const dispatchResult = await startAgentRun(
     params.agentManager,
