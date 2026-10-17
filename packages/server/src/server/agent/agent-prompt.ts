@@ -442,6 +442,12 @@ export async function sendPreparedPromptToAgent(
     await params.agentManager.setAgentMode(params.agentId, params.sessionMode);
   }
 
+  await params.agentManager.persistSubmittedPromptImages({
+    agentId: params.agentId,
+    prompt: params.prompt,
+    clientMessageId: params.runOptions?.clientMessageId,
+  });
+
   await params.beforeDispatch?.();
   if (!params.idleOnly && params.admit?.() === false) {
     throw new Error("Queued agent message was withdrawn");
@@ -474,6 +480,12 @@ export async function startCreatedAgentInitialPrompt(
     await resolvePromptSource(params.source, params.agentManager, params.agentStorage),
     params.runOptions?.clientMessageId,
   );
+
+  await params.agentManager.persistSubmittedPromptImages({
+    agentId: params.agentId,
+    prompt: delivery.prompt,
+    clientMessageId: delivery.messageId,
+  });
   const dispatchResult = await startAgentRun(
     params.agentManager,
     params.agentId,
