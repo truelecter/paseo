@@ -1,5 +1,6 @@
 import { useStableEvent } from "@/hooks/use-stable-event";
 import { getAgentAttachmentPillContent } from "@/attachments/attachment-pill-content";
+import type { AttachmentMetadata } from "@/attachments/types";
 import { AssistantForkMenu, type AssistantForkTarget } from "@/components/assistant-fork-menu";
 import { AttachmentLightbox, type ImageLightboxSource } from "@/components/attachment-lightbox";
 import {
@@ -7,6 +8,7 @@ import {
   AttachmentLabel,
   AttachmentThumbnail,
 } from "@/components/attachment-pill";
+import { useDaemonImage } from "@/components/markdown/images";
 import { MarkdownRenderer } from "@/components/markdown/renderer";
 import { useRetainedPanelActive } from "@/components/retained-panel";
 import { RewindMenu, type RewindMode } from "@/components/rewind/rewind-menu";
@@ -19,7 +21,7 @@ import { useRevealedText, type MarkdownPhase } from "@/hooks/use-revealed-text";
 import { ICON_SIZE, type Theme } from "@/styles/theme";
 import { inlineUnistylesStyle } from "@/styles/unistyles-inline-style";
 import { buildToolCallPresentation } from "@/tool-calls/presentation";
-import type { TaskActivity, TodoEntry, UserMessageImageAttachment } from "@/types/stream";
+import type { TaskActivity, TodoEntry, UserMessageImage } from "@/types/stream";
 import { setAssistantMessageHeight } from "@/utils/assistant-message-height-estimate";
 import { isRenderProfileEnabled } from "@/utils/render-profiler";
 import { writeMarkdownToRichClipboard } from "@/utils/rich-clipboard";
@@ -29,7 +31,11 @@ import { resolveToolCallIcon } from "@/utils/tool-call-icon";
 import { useTargetAgentTitle } from "@/tool-calls/use-target-agent-title";
 import type { DaemonClient } from "@getpaseo/client/internal/daemon-client";
 import type { AgentMessage } from "@getpaseo/protocol/agent-message";
-import type { AgentCapabilityFlags, ToolCallDetail } from "@getpaseo/protocol/agent-types";
+import type {
+  AgentCapabilityFlags,
+  AgentTimelineImage,
+  ToolCallDetail,
+} from "@getpaseo/protocol/agent-types";
 import type { AgentAttachment } from "@getpaseo/protocol/messages";
 import MaskedView from "@react-native-masked-view/masked-view";
 import {
@@ -60,6 +66,7 @@ import {
 } from "react";
 import { useTranslation } from "react-i18next";
 import {
+  Image,
   Pressable,
   StyleProp,
   Text,
@@ -93,11 +100,12 @@ interface UserMessageProps {
   agentId?: string;
   messageId?: string;
   message: string;
-  images?: UserMessageImageAttachment[];
+  images?: UserMessageImage[];
   attachments?: AgentAttachment[];
   timestamp: number;
   capabilities?: AgentCapabilityFlags;
   client?: DaemonClient | null;
+  workspaceRoot?: string;
   isFirstInGroup?: boolean;
   isLastInGroup?: boolean;
   isPending?: boolean;
@@ -340,6 +348,11 @@ const userMessageStylesheet = StyleSheet.create((theme) => ({
   imagePreviewSpacing: {
     marginBottom: theme.spacing[2],
   },
+  remoteImageThumbnail: {
+    width: 48,
+    height: 48,
+    backgroundColor: theme.colors.surface1,
+  },
   copyButton: {
     alignSelf: "center",
     padding: theme.spacing[1],
@@ -368,8 +381,8 @@ const userMessageStylesheet = StyleSheet.create((theme) => ({
 }));
 
 interface UserMessageImagePillProps {
-  image: UserMessageImageAttachment;
-  onOpen: (image: UserMessageImageAttachment) => void;
+  image: AttachmentMetadata;
+  onOpen: (image: AttachmentMetadata) => void;
   accessibilityLabel: string;
 }
 
@@ -380,6 +393,53 @@ function UserMessageImagePill({ image, onOpen, accessibilityLabel }: UserMessage
   return (
     <AttachmentFrame onPress={handlePress} accessibilityLabel={accessibilityLabel}>
       <AttachmentThumbnail metadata={image} />
+    </AttachmentFrame>
+  );
+}
+
+function isRemoteUserMessageImage(image: UserMessageImage): image is AgentTimelineImage {
+  return "source" in image;
+}
+
+function RemoteUserMessageImagePill({
+  image,
+  client,
+  workspaceRoot,
+  serverId,
+  onOpen,
+  accessibilityLabel,
+}: {
+  image: AgentTimelineImage;
+  client?: DaemonClient | null;
+  workspaceRoot?: string;
+  serverId?: string;
+  onOpen: (source: ImageLightboxSource) => void;
+  accessibilityLabel: string;
+}) {
+  const resolved = useDaemonImage(image.source, { client, workspaceRoot, serverId });
+  const directUri = resolved.status === "direct" ? resolved.uri : null;
+  const directSource = useMemo(() => (directUri ? { uri: directUri } : null), [directUri]);
+  const handlePress = useCallback(() => {
+    if (resolved.status === "loaded") onOpen({ type: "attachment", metadata: resolved.attachment });
+    else if (resolved.status === "direct") onOpen({ type: "uri", uri: resolved.uri });
+  }, [onOpen, resolved]);
+  let thumbnail: ReactNode;
+  if (resolved.status === "loaded") {
+    thumbnail = <AttachmentThumbnail metadata={resolved.attachment} />;
+  } else if (directSource) {
+    thumbnail = (
+      <Image
+        source={directSource}
+        style={userMessageStylesheet.remoteImageThumbnail}
+        resizeMode="cover"
+      />
+    );
+  } else {
+    thumbnail = <View style={userMessageStylesheet.remoteImageThumbnail} />;
+  }
+  return (
+    <AttachmentFrame onPress={handlePress} accessibilityLabel={accessibilityLabel}>
+      {thumbnail}
     </AttachmentFrame>
   );
 }
@@ -396,6 +456,7 @@ export const UserMessage = memo(function UserMessage({
   timestamp,
   capabilities,
   client,
+  workspaceRoot,
   isFirstInGroup = true,
   isLastInGroup = true,
   isPending = false,
@@ -404,11 +465,11 @@ export const UserMessage = memo(function UserMessage({
   const isCompact = useIsCompactFormFactor();
   const { t } = useTranslation();
   const [isHovered, setIsHovered] = useState(false);
-  const [lightboxMetadata, setLightboxMetadata] = useState<UserMessageImageAttachment | null>(null);
-  const handleLightboxClose = useCallback(() => setLightboxMetadata(null), []);
-  const lightboxSource = useMemo<ImageLightboxSource | null>(
-    () => (lightboxMetadata ? { type: "attachment", metadata: lightboxMetadata } : null),
-    [lightboxMetadata],
+  const [lightboxSource, setLightboxSource] = useState<ImageLightboxSource | null>(null);
+  const handleLightboxClose = useCallback(() => setLightboxSource(null), []);
+  const handleOpenLocalImage = useCallback(
+    (metadata: AttachmentMetadata) => setLightboxSource({ type: "attachment", metadata }),
+    [],
   );
   const resolvedDisableOuterSpacing = useDisableOuterSpacing(disableOuterSpacing);
   const hasText = message.trim().length > 0;
@@ -476,14 +537,26 @@ export const UserMessage = memo(function UserMessage({
         <View style={userMessageStylesheet.bubble}>
           {hasImages ? (
             <View style={imagePreviewContainerStyle}>
-              {images.map((image) => (
-                <UserMessageImagePill
-                  key={image.id}
-                  image={image}
-                  onOpen={setLightboxMetadata}
-                  accessibilityLabel={t("composer.attachments.openImage")}
-                />
-              ))}
+              {images.map((image) =>
+                isRemoteUserMessageImage(image) ? (
+                  <RemoteUserMessageImagePill
+                    key={image.id}
+                    image={image}
+                    client={client}
+                    workspaceRoot={workspaceRoot}
+                    serverId={serverId}
+                    onOpen={setLightboxSource}
+                    accessibilityLabel={t("composer.attachments.openImage")}
+                  />
+                ) : (
+                  <UserMessageImagePill
+                    key={image.id}
+                    image={image}
+                    onOpen={handleOpenLocalImage}
+                    accessibilityLabel={t("composer.attachments.openImage")}
+                  />
+                ),
+              )}
             </View>
           ) : null}
           {hasAttachments ? (
