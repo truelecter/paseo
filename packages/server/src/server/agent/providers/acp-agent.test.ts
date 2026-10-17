@@ -107,7 +107,7 @@ interface ACPSessionInternals {
   };
   activeForegroundTurnId: string | null;
   configOptions: SessionConfigOption[];
-  translateSessionUpdate(update: SessionUpdate): AgentStreamEvent[];
+  translateSessionUpdate(update: SessionUpdate): Promise<AgentStreamEvent[]>;
   acpMcpServers(): unknown[];
 }
 
@@ -1109,7 +1109,7 @@ describe("ACPAgentSession Zed parity", () => {
       modelId: "sonnet",
     });
 
-    const modeEvents = asInternals<ACPSessionInternals>(validSession).translateSessionUpdate({
+    const modeEvents = await asInternals<ACPSessionInternals>(validSession).translateSessionUpdate({
       sessionUpdate: "current_mode_update",
       currentModeId: "default",
     });
@@ -1201,7 +1201,7 @@ describe("ACPAgentSession Zed parity", () => {
     const session = createSession();
     const internals = asInternals<ACPSessionInternals>(session);
 
-    const events = internals.translateSessionUpdate({
+    const events = await internals.translateSessionUpdate({
       sessionUpdate: "config_option_update",
       configOptions: [
         selectConfigOption("mode", ["default", "plan"], "plan"),
@@ -1256,11 +1256,11 @@ describe("ACPAgentSession Zed parity", () => {
     const session = createSession();
     const internals = asInternals<ACPSessionInternals>(session);
 
-    internals.translateSessionUpdate({
+    await internals.translateSessionUpdate({
       sessionUpdate: "current_mode_update",
       currentModeId: "plan",
     });
-    const events = internals.translateSessionUpdate({
+    const events = await internals.translateSessionUpdate({
       sessionUpdate: "config_option_update",
       configOptions: [selectConfigOption("model", ["sonnet"], "sonnet")],
     });
@@ -1277,11 +1277,11 @@ describe("ACPAgentSession Zed parity", () => {
     const session = createSession();
     const internals = asInternals<ACPSessionInternals>(session);
 
-    const configEvents = internals.translateSessionUpdate({
+    const configEvents = await internals.translateSessionUpdate({
       sessionUpdate: "config_option_update",
       configOptions: [selectConfigOption("mode", ["default", "plan"], "plan")],
     });
-    const modeEvents = internals.translateSessionUpdate({
+    const modeEvents = await internals.translateSessionUpdate({
       sessionUpdate: "current_mode_update",
       currentModeId: "default",
     });
@@ -1779,7 +1779,7 @@ describe("ACPAgentSession Zed parity", () => {
     const session = createCopilotSessionWithConfig();
     const internals = asInternals<ACPSessionInternals>(session);
 
-    const events = internals.translateSessionUpdate({
+    const events = await internals.translateSessionUpdate({
       sessionUpdate: "config_option_update",
       configOptions: [
         copilotModeConfigOption("https://agentclientprotocol.com/protocol/session-modes#agent"),
@@ -3417,7 +3417,7 @@ describe("ACPAgentSession slash commands", () => {
 
     const listCommandsPromise = session.listCommands();
 
-    asInternals<ACPSessionInternals>(session).translateSessionUpdate({
+    await asInternals<ACPSessionInternals>(session).translateSessionUpdate({
       sessionUpdate: "available_commands_update",
       availableCommands: [
         {
@@ -3674,6 +3674,39 @@ describe("ACPAgentSession", () => {
     });
 
     expect(await listCommandsPromise).toEqual([]);
+  });
+
+  test("retains an image-only ACP user message during replay", async () => {
+    const session = createSession();
+    asInternals<ACPSessionInternals>(session).sessionId = "session-1";
+    const events: AgentStreamEvent[] = [];
+    session.subscribe((event) => events.push(event));
+    await session.sessionUpdate({
+      sessionId: "session-1",
+      update: {
+        sessionUpdate: "user_message_chunk",
+        messageId: "user-image",
+        content: { type: "image", data: "aW1hZ2U=", mimeType: "image/png" },
+      } as SessionUpdate,
+    });
+    await session.sessionUpdate({
+      sessionId: "session-1",
+      update: {
+        sessionUpdate: "agent_message_chunk",
+        messageId: "assistant-next",
+        content: { type: "text", text: "Seen" },
+      } as SessionUpdate,
+    });
+    expect(events).toContainEqual(
+      expect.objectContaining({
+        type: "timeline",
+        item: expect.objectContaining({
+          type: "user_message",
+          messageId: "user-image",
+          images: [{ id: expect.any(String), source: expect.any(String), mimeType: "image/png" }],
+        }),
+      }),
+    );
   });
 
   test("emits assistant and reasoning chunks as deltas while user chunks stay accumulated", async () => {
@@ -4222,7 +4255,11 @@ describe("ACPAgentSession", () => {
       {
         type: "timeline",
         provider: session.provider,
-        item: { type: "user_message", text: "[image]" },
+        item: {
+          type: "user_message",
+          text: "[image]",
+          images: [{ id: expect.any(String), mimeType: "image/png", source: expect.any(String) }],
+        },
         turnId: expect.any(String),
       },
     ]);
@@ -4297,7 +4334,11 @@ describe("ACPAgentSession", () => {
       {
         type: "timeline",
         provider: session.provider,
-        item: { type: "user_message", text: "[image]" },
+        item: {
+          type: "user_message",
+          text: "[image]",
+          images: [{ id: expect.any(String), mimeType: "image/png", source: expect.any(String) }],
+        },
         turnId,
       },
       expect.objectContaining({ type: "turn_failed", turnId, error: "prompt failed" }),
@@ -4571,7 +4612,11 @@ describe("ACPAgentSession close() tree-kill", () => {
       {
         type: "timeline",
         provider: session.provider,
-        item: { type: "user_message", text: "[image]" },
+        item: {
+          type: "user_message",
+          text: "[image]",
+          images: [{ id: expect.any(String), mimeType: "image/png", source: expect.any(String) }],
+        },
       },
     ]);
   });
@@ -5245,7 +5290,11 @@ describe("ACP session/load invariant — cwd and mcpServers always passed", () =
       {
         type: "timeline",
         provider: session.provider,
-        item: { type: "user_message", text: "hey[image]" },
+        item: {
+          type: "user_message",
+          text: "hey[image]",
+          images: [{ id: expect.any(String), mimeType: "image/png", source: expect.any(String) }],
+        },
       },
       {
         type: "timeline",
