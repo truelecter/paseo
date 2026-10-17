@@ -95,6 +95,11 @@ buildNpmPackage rec {
     # daemon closure by scripts/trace-daemon.mjs.
     npm rebuild node-pty
 
+    # The install above runs with --ignore-scripts, so the root postinstall that
+    # applies patches/ (patch-package) never ran. The web UI imports patched
+    # exports, such as @gorhom/bottom-sheet's BottomSheetModalInternalProvider.
+    npm run postinstall
+
     # Build all server packages in dependency order (defined in package.json)
     npm run build:server
     npm run build:daemon-web-ui
