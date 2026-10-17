@@ -1,5 +1,6 @@
 import { mapCustomMessageToToolCall } from "../custom-message.js";
 import type { AgentStreamEvent, AgentTimelineItem, ToolCallDetail } from "../../agent-sdk-types.js";
+import { userMessageImages } from "../user-message-images.js";
 import {
   materializeProviderImage,
   renderProviderImageOutputAsAssistantMarkdown,
@@ -82,7 +83,7 @@ export class PiHistoryMapper {
     for (const message of messages) {
       switch (message.role) {
         case "user":
-          events.push(...this.mapUserMessage(message));
+          events.push(...(await this.mapUserMessage(message)));
           break;
         case "custom":
           events.push(...this.mapCustomMessage(message));
@@ -107,13 +108,16 @@ export class PiHistoryMapper {
     return (await Promise.all(this.hydrations)).flat();
   }
 
-  private mapUserMessage(message: Extract<PiAgentMessage, { role: "user" }>): AgentStreamEvent[] {
+  private async mapUserMessage(
+    message: Extract<PiAgentMessage, { role: "user" }>,
+  ): Promise<AgentStreamEvent[]> {
     const text = getUserMessageText(message.content);
+    const userEntry = this.userEntries[this.userIndex];
     this.userIndex += 1;
-    if (!text) {
+    const images = await userMessageImages(message.content);
+    if (!text && images.length === 0) {
       return [];
     }
-    const userEntry = this.userEntries[this.userIndex - 1];
     return [
       {
         type: "timeline",
@@ -122,6 +126,7 @@ export class PiHistoryMapper {
           type: "user_message",
           text,
           ...(userEntry ? { messageId: userEntry.id } : {}),
+          ...(images.length ? { images } : {}),
         },
       },
     ];
