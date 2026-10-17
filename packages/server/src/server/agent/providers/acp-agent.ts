@@ -2,6 +2,7 @@ import type { ProviderOptions } from "@getpaseo/protocol/agent-types";
 import { ACPProviderOptionsSchema } from "./acp-options.js";
 import { applyProviderOptionsPatch } from "../option-controls.js";
 import { assertChangesAreLive } from "../provider-options.js";
+import { userMessageImages } from "./user-message-images.js";
 import { type ChildProcess, type ChildProcessWithoutNullStreams } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import { once } from "node:events";
@@ -93,6 +94,7 @@ import {
   type AgentSessionConfig,
   type AgentSlashCommand,
   type AgentStreamEvent,
+  type AgentTimelineImage,
   type AgentTimelineItem,
   type AgentUsage,
   type AgentUsageSession,
@@ -667,6 +669,7 @@ interface PendingPermission {
 interface PendingUserMessage {
   text: string;
   messageId?: string;
+  images?: AgentTimelineImage[];
 }
 
 export type SessionStateResponse = NewSessionResponse | LoadSessionResponse | ResumeSessionResponse;
@@ -1868,6 +1871,9 @@ export class ACPAgentSession implements AgentSession, ACPClient {
   private readonly subscribers = new Set<(event: AgentStreamEvent) => void>();
   private readonly pendingPermissions = new Map<string, PendingPermission>();
   private pendingUserMessage: PendingUserMessage | null = null;
+  // Session updates translate and deliver one at a time, in arrival order: user image
+  // recovery awaits. Code that flushes or ends a turn waits for it to drain first.
+  private sessionUpdateQueue: Promise<void> = Promise.resolve();
   private submittedUserMessageTurnId: string | null = null;
   private readonly toolCalls = new Map<string, ACPToolSnapshot>();
   private readonly terminalEntries = new Map<string, TerminalEntry>();
@@ -2021,6 +2027,7 @@ export class ACPAgentSession implements AgentSession, ACPClient {
             mcpServers: this.acpMcpServers(),
           }),
         );
+        await this.sessionUpdateQueue;
         this.deliverTranslatedEvents(this.flushPendingUserMessage());
         this.replayingHistory = false;
         this.historyPending = this.persistedHistory.length > 0;
@@ -2104,6 +2111,7 @@ export class ACPAgentSession implements AgentSession, ACPClient {
     prompt: AgentPromptInput,
     options?: AgentRunOptions,
   ): Promise<{ turnId: string }> {
+    await this.sessionUpdateQueue;
     if (this.closed) {
       throw new Error(`${this.provider} session is closed`);
     }
@@ -2137,7 +2145,8 @@ export class ACPAgentSession implements AgentSession, ACPClient {
         messageId,
         prompt: toACPContentBlocks(prompt),
       })
-      .then((response) => {
+      .then(async (response) => {
+        await this.sessionUpdateQueue;
         this.handlePromptResponse(response, turnId);
         return;
       })
@@ -2804,6 +2813,7 @@ export class ACPAgentSession implements AgentSession, ACPClient {
     }
     this.closed = true;
 
+    await this.sessionUpdateQueue;
     this.deliverTranslatedEvents(this.flushPendingUserMessage());
     this.settleCommandsReady();
 
@@ -2918,7 +2928,13 @@ export class ACPAgentSession implements AgentSession, ACPClient {
       return;
     }
 
-    const events = this.translateSessionUpdate(params.update);
+    const step = this.sessionUpdateQueue.then(() => this.translateAndDeliverSessionUpdate(params));
+    this.sessionUpdateQueue = step.catch(() => {});
+    await step;
+  }
+
+  private async translateAndDeliverSessionUpdate(params: SessionNotification): Promise<void> {
+    const events = await this.translateSessionUpdate(params.update);
     this.logger.trace(
       {
         agentId: this.agentId,
@@ -3324,9 +3340,9 @@ export class ACPAgentSession implements AgentSession, ACPClient {
     return error instanceof Error && error.message === this.featureUnavailableMessage(featureId);
   }
 
-  private translateSessionUpdate(update: SessionUpdate): AgentStreamEvent[] {
+  private async translateSessionUpdate(update: SessionUpdate): Promise<AgentStreamEvent[]> {
     if (update.sessionUpdate === "user_message_chunk") {
-      return this.handleUserMessageChunk(update);
+      return await this.handleUserMessageChunk(update);
     }
 
     const pendingUserEvents = this.flushPendingUserMessage();
@@ -3397,9 +3413,9 @@ export class ACPAgentSession implements AgentSession, ACPClient {
     }
   }
 
-  private handleUserMessageChunk(
+  private async handleUserMessageChunk(
     update: Extract<SessionUpdate, { sessionUpdate: "user_message_chunk" }>,
-  ): AgentStreamEvent[] {
+  ): Promise<AgentStreamEvent[]> {
     this.fallbackAssistantMessageId = null;
     if (
       this.activeForegroundTurnId &&
@@ -3409,7 +3425,8 @@ export class ACPAgentSession implements AgentSession, ACPClient {
     }
 
     const chunkText = contentBlockToText(update.content);
-    if (!chunkText) {
+    const images = await userMessageImages([update.content]);
+    if (!chunkText && !images.length) {
       return [];
     }
 
@@ -3427,6 +3444,8 @@ export class ACPAgentSession implements AgentSession, ACPClient {
       this.pendingUserMessage.messageId = messageId;
     }
     this.pendingUserMessage.text += chunkText;
+    if (images.length)
+      this.pendingUserMessage.images = [...(this.pendingUserMessage.images ?? []), ...images];
     return events;
   }
 
@@ -3440,6 +3459,7 @@ export class ACPAgentSession implements AgentSession, ACPClient {
       this.wrapTimeline({
         type: "user_message",
         text: pending.text,
+        ...(pending.images?.length ? { images: pending.images } : {}),
         ...(pending.messageId ? { messageId: pending.messageId } : {}),
       }),
     ];
