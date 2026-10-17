@@ -106,6 +106,7 @@ import {
   type LatestReleaseLookup,
 } from "../release-check.js";
 import { runUpdateCommand, updatedForNewAgents } from "../update-command.js";
+import { userMessageImages } from "../user-message-images.js";
 import { THINKING_APPLIES_NEXT_TURN_NOTICE } from "../../provider-notices.js";
 import {
   isProviderImageMarkdown,
@@ -6061,14 +6062,25 @@ class ClaudeAgentSession implements AgentSession {
       });
     }
 
-    if (textMessageType === "user_message" && userTextParts.length > 0) {
-      items.unshift({
-        type: "user_message",
-        text: userTextParts.join("\n\n"),
-      });
+    if (textMessageType === "user_message") {
+      const userMessage = await this.userMessageFromBlocks(content, userTextParts);
+      if (userMessage) items.unshift(userMessage);
     }
 
     return items;
+  }
+
+  private async userMessageFromBlocks(
+    content: ReadonlyArray<unknown>,
+    textParts: string[],
+  ): Promise<AgentTimelineItem | null> {
+    const images = await userMessageImages(content);
+    if (textParts.length === 0 && images.length === 0) return null;
+    return {
+      type: "user_message",
+      text: textParts.join("\n\n"),
+      ...(images.length ? { images } : {}),
+    };
   }
 
   private appendTextBlockToTimeline(
@@ -6939,6 +6951,23 @@ function readSteeredPromptHistoryItem(entry: ClaudeHistoryEntry): AgentTimelineI
   return { type: "user_message", text, ...(messageId ? { messageId } : {}) };
 }
 
+async function historicalUserMessage(
+  content: unknown,
+  messageId: string | null,
+): Promise<AgentTimelineItem[]> {
+  const text = extractUserMessageText(content);
+  const images = await userMessageImages(content);
+  if (!text && !images.length) return [];
+  return [
+    {
+      type: "user_message",
+      text: text ?? "",
+      ...(messageId ? { messageId } : {}),
+      ...(images.length ? { images } : {}),
+    },
+  ];
+}
+
 export async function convertClaudeHistoryEntry(
   entry: ClaudeHistoryEntry,
   mapBlocks: (
@@ -6972,14 +7001,7 @@ export async function convertClaudeHistoryEntry(
   const timeline: AgentTimelineItem[] = [];
 
   if (entry.type === "user") {
-    const text = extractUserMessageText(content);
-    if (text) {
-      timeline.push({
-        type: "user_message",
-        text,
-        ...(userMessageId ? { messageId: userMessageId } : {}),
-      });
-    }
+    timeline.push(...(await historicalUserMessage(content, userMessageId)));
   }
 
   if (hasToolBlock && normalizedBlocks) {
