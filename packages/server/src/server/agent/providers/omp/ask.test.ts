@@ -309,3 +309,108 @@ describe("OMP ask RPC UI", () => {
     );
   });
 });
+
+describe("OMP ask dialog", () => {
+  function askDialog(omp: OmpHarness): void {
+    omp.emit({
+      type: "extension_ui_request",
+      id: "ask-dialog-1",
+      method: "ask",
+      questions: [
+        {
+          id: "colors",
+          question: "Which colors?",
+          header: "Colors",
+          multi: true,
+          options: [{ label: "Red", description: "Warm" }, { label: "Blue" }],
+        },
+        {
+          id: "shape",
+          question: "Which shape?",
+          header: "Colors",
+          recommended: 1,
+          options: [{ label: "Round" }, { label: "Square" }],
+        },
+        { id: "name", question: "Name it?", options: [{ label: "Bob" }] },
+      ],
+    });
+  }
+
+  test("shows every question in one card and answers them in order", async () => {
+    const omp = new OmpHarness();
+    await omp.start();
+    // Without the opt-in OMP never sends the dialog and asks one select at a time.
+    expect(omp.askDialogRequests()).toEqual([true]);
+    askDialog(omp);
+
+    expect(omp.pendingPermissions()).toHaveLength(1);
+    expect(omp.pendingPermissions()[0]).toMatchObject({
+      id: "ask-dialog-1",
+      kind: "question",
+      title: "Which colors?",
+      input: {
+        questions: [
+          {
+            question: "Which colors?",
+            header: "Colors",
+            multiSelect: true,
+            allowOther: true,
+            options: [{ label: "Red", description: "Warm" }, { label: "Blue" }],
+          },
+          {
+            question: "Which shape?",
+            header: "Colors (2)",
+            multiSelect: false,
+            options: [{ label: "Round" }, { label: "Square (Recommended)" }],
+          },
+          { question: "Name it?", header: "Question 3" },
+        ],
+      },
+    });
+
+    await omp.respondToPermission("ask-dialog-1", {
+      behavior: "allow",
+      updatedInput: {
+        answers: {
+          Colors: "Blue, Red, Violet",
+          "Colors (2)": "Square (Recommended)",
+          "Question 3": "Alice",
+        },
+      },
+    });
+
+    expect(omp.pendingPermissions()).toHaveLength(0);
+    expect(omp.extensionUiResponses()).toEqual([
+      {
+        id: "ask-dialog-1",
+        response: {
+          answers: [
+            { id: "colors", selectedOptions: ["Blue", "Red"], customInput: "Violet" },
+            { id: "shape", selectedOptions: ["Square"] },
+            { id: "name", selectedOptions: [], customInput: "Alice" },
+          ],
+        },
+      },
+    ]);
+  });
+
+  test("cancels the dialog when the card is dismissed", async () => {
+    const omp = new OmpHarness();
+    await omp.start();
+    askDialog(omp);
+    await omp.respondToPermission("ask-dialog-1", { behavior: "deny" });
+
+    expect(omp.extensionUiResponses()).toEqual([
+      { id: "ask-dialog-1", response: { cancelled: true } },
+    ]);
+  });
+
+  test("cancels a dialog whose questions can't be read", async () => {
+    const omp = new OmpHarness();
+    await omp.start();
+    omp.emit({ type: "extension_ui_request", id: "ask-bad", method: "ask", questions: [] });
+
+    expect(omp.pendingPermissions()).toHaveLength(0);
+    expect(omp.extensionUiResponses()).toEqual([{ id: "ask-bad", response: { cancelled: true } }]);
+  });
+});
