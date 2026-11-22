@@ -5,10 +5,16 @@ import type {
 } from "../../agent-sdk-types.js";
 import { splitMultiSelectAnswer } from "../question-card-answer.js";
 import { OmpFormQuestion } from "./form-question.js";
-import type { OmpAgentMessage, OmpExtensionUiResponse, OmpRuntimeEvent } from "./rpc-types.js";
+import {
+  OmpAskDialogQuestionsSchema,
+  type OmpAgentMessage,
+  type OmpExtensionUiResponse,
+  type OmpRuntimeEvent,
+} from "./rpc-types.js";
 
 type UiRequest = Extract<OmpRuntimeEvent, { type: "extension_ui_request" }>;
-type SendResponse = (id: string, response: OmpExtensionUiResponse) => void;
+type UiResponse = OmpExtensionUiResponse;
+type SendResponse = (id: string, response: UiResponse) => void;
 
 const OTHER = "Other (type your own)";
 const ANSWER_HEADER = "Response";
@@ -29,6 +35,15 @@ interface PendingAnswer {
   selected: string[];
   custom: string | null;
   next: "select" | "editor";
+}
+
+/** One question of an open `ask` dialog card, keyed in the card's answers by `header`. */
+interface DialogQuestion {
+  id: string;
+  header: string;
+  multi: boolean;
+  /** Card option label (with " (Recommended)") -> the label OMP expects back. */
+  labels: Map<string, string>;
 }
 
 function record(value: unknown): Record<string, unknown> | null {
@@ -176,11 +191,22 @@ function selectedAnswer(
   return splitMultiSelectAnswer(answer, labels);
 }
 
-/** Owns OMP question mapping and the ask tool's multi-RPC answer sequence. */
+function uniqueHeader(header: string, used: Set<string>): string {
+  let candidate = header;
+  for (let n = 2; used.has(candidate); n++) candidate = `${header} (${n})`;
+  used.add(candidate);
+  return candidate;
+}
+
+/**
+ * Owns OMP question mapping: the one-card HTML `form` and `ask` dialog, and the
+ * select-based ask sequence of OMP builds and tools that use neither.
+ */
 export class OmpQuestionUi {
   private questions: AskQuestion[] = [];
   private pending: PendingAnswer | null = null;
   private readonly forms = new Map<string, OmpFormQuestion>();
+  private readonly dialogs = new Map<string, DialogQuestion[]>();
 
   observeMessage(message: OmpAgentMessage): void {
     if (message.role !== "assistant") return;
@@ -209,6 +235,7 @@ export class OmpQuestionUi {
     send: SendResponse,
   ): AgentPermissionRequest | null {
     if (event.method === "form") return this.mapForm(event, provider, send);
+    if (event.method === "ask") return this.mapAskDialog(event, provider, send);
     if (this.consume(event, send)) return null;
     return this.mapAsk(event, provider) ?? mapGenericQuestion(event, provider);
   }
@@ -231,6 +258,83 @@ export class OmpQuestionUi {
   /** OMP settled the request itself; drop it without replying. */
   forget(requestId: string): void {
     this.forms.delete(requestId);
+    this.dialogs.delete(requestId);
+  }
+
+  /** Shows every question of an OMP `ask` dialog request in one card. */
+  private mapAskDialog(
+    event: UiRequest,
+    provider: AgentProvider,
+    send: SendResponse,
+  ): AgentPermissionRequest | null {
+    const parsed = OmpAskDialogQuestionsSchema.safeParse(event.questions);
+    if (!parsed.success) {
+      send(event.id, { cancelled: true });
+      return null;
+    }
+    const used = new Set<string>();
+    const dialog: DialogQuestion[] = [];
+    const questions = parsed.data.map((question, index) => {
+      const header = uniqueHeader(question.header?.trim() || `Question ${index + 1}`, used);
+      const options = question.options.map((option, optionIndex) => ({
+        label:
+          optionIndex === question.recommended ? `${option.label} (Recommended)` : option.label,
+        ...(option.description ? { description: option.description } : {}),
+        ...(option.preview ? { preview: option.preview } : {}),
+      }));
+      dialog.push({
+        id: question.id,
+        header,
+        multi: question.multi === true,
+        labels: new Map(options.map((option, i) => [option.label, question.options[i].label])),
+      });
+      return {
+        question: question.question,
+        header,
+        options,
+        multiSelect: question.multi === true,
+        allowOther: true,
+      };
+    });
+    this.dialogs.set(event.id, dialog);
+    return {
+      id: event.id,
+      provider,
+      name: "OMP ask",
+      kind: "question",
+      title: parsed.data[0].question,
+      input: { questions },
+    };
+  }
+
+  private respondDialog(
+    id: string,
+    dialog: DialogQuestion[],
+    response: AgentPermissionResponse,
+    send: SendResponse,
+  ): void {
+    const answers = record(
+      response.behavior === "allow" ? response.updatedInput?.answers : undefined,
+    );
+    const results: NonNullable<UiResponse["answers"]> = [];
+    for (const question of dialog) {
+      const answer = answers?.[question.header];
+      if (typeof answer !== "string") {
+        send(id, { cancelled: true });
+        return;
+      }
+      const { selected, custom } = selectedAnswer(
+        answer,
+        [...question.labels.keys()],
+        question.multi,
+      );
+      results.push({
+        id: question.id,
+        selectedOptions: selected.map((label) => question.labels.get(label) ?? label),
+        ...(custom === null ? {} : { customInput: custom }),
+      });
+    }
+    send(id, { answers: results });
   }
 
   private mapAsk(event: UiRequest, provider: AgentProvider): AgentPermissionRequest | null {
@@ -285,6 +389,12 @@ export class OmpQuestionUi {
     if (form) {
       this.forms.delete(request.id);
       send(request.id, form.response(response));
+      return;
+    }
+    const dialog = this.dialogs.get(request.id);
+    if (dialog) {
+      this.dialogs.delete(request.id);
+      this.respondDialog(request.id, dialog, response, send);
       return;
     }
     if (request.metadata?.ompAsk !== true) {

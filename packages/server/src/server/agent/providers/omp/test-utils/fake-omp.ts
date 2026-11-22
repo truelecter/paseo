@@ -11,6 +11,7 @@ import type {
   OmpRpcHostToolResult,
   OmpRpcHostToolUpdate,
   OmpAgentMessage,
+  OmpExtensionUiResponse,
   OmpModel,
   OmpPromptAck,
   OmpRpcSlashCommand,
@@ -162,6 +163,7 @@ export class FakeOmpSession implements OmpRuntimeSession {
     id: string;
     response: OmpExtensionUiResponse;
   }> = [];
+  readonly askDialogRequests: boolean[] = [];
   setModelResult: OmpModel | null = null;
   models: OmpModel[] = [];
   messages: OmpAgentMessage[] = [];
@@ -386,6 +388,10 @@ export class FakeOmpSession implements OmpRuntimeSession {
     if (error) {
       throw error;
     }
+  }
+
+  async setAskDialog(enabled: boolean): Promise<void> {
+    this.askDialogRequests.push(enabled);
   }
 
   waitForSubagentSubscriptions(count: number): Promise<void> {

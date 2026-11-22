@@ -517,6 +517,10 @@ export class OmpHarness {
     return this.omp.latestSession().extensionUiResponses;
   }
 
+  askDialogRequests() {
+    return this.omp.latestSession().askDialogRequests;
+  }
+
   async availableModes() {
     return await this.requireSession().getAvailableModes();
   }
