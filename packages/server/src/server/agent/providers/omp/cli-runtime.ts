@@ -34,6 +34,7 @@ import {
   type OmpThinkingLevel,
   type OmpAgentMessage,
   type OmpModel,
+  type OmpExtensionUiResponse,
   type OmpPromptAck,
   type OmpRpcCommand,
   type OmpRpcHostToolDefinition,
@@ -240,6 +241,10 @@ class OmpCliRuntimeSession implements OmpRuntimeSession {
     await this.request({ type: "set_subagent_subscription", level });
   }
 
+  async setAskDialog(enabled: boolean): Promise<void> {
+    await this.request({ type: "set_ask_dialog", enabled });
+  }
+
   async setHostTools(tools: OmpRpcHostToolDefinition[]): Promise<string[]> {
     const data = OmpHostToolsResultSchema.parse(
       await this.request({ type: "set_host_tools", tools }),
@@ -288,10 +293,7 @@ class OmpCliRuntimeSession implements OmpRuntimeSession {
     });
   }
 
-  respondToExtensionUiRequest(
-    id: string,
-    response: { value?: string; confirmed?: boolean; cancelled?: boolean },
-  ): void {
+  respondToExtensionUiRequest(id: string, response: OmpExtensionUiResponse): void {
     this.process.send({ type: "extension_ui_response", id, ...response });
   }
 
