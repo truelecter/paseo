@@ -10,6 +10,7 @@ import type {
   OmpRpcHostToolResult,
   OmpRpcHostToolUpdate,
   OmpAgentMessage,
+  OmpExtensionUiResponse,
   OmpModel,
   OmpPromptAck,
   OmpRpcSlashCommand,
@@ -157,10 +158,8 @@ export class FakeOmpSession implements OmpRuntimeSession {
   onAbort: (() => void) | null = null;
   private heldStateRequests: Array<() => void> | null = null;
   readonly canceledExtensionUiRequests: string[] = [];
-  readonly extensionUiResponses: Array<{
-    id: string;
-    response: { value?: string; confirmed?: boolean; cancelled?: boolean };
-  }> = [];
+  readonly extensionUiResponses: Array<{ id: string; response: OmpExtensionUiResponse }> = [];
+  readonly askDialogRequests: boolean[] = [];
   setModelResult: OmpModel | null = null;
   models: OmpModel[] = [];
   messages: OmpAgentMessage[] = [];
@@ -387,6 +386,10 @@ export class FakeOmpSession implements OmpRuntimeSession {
     }
   }
 
+  async setAskDialog(enabled: boolean): Promise<void> {
+    this.askDialogRequests.push(enabled);
+  }
+
   waitForSubagentSubscriptions(count: number): Promise<void> {
     if (this.subagentSubscriptionRequests.length >= count) return Promise.resolve();
     return new Promise((resolve) => this.subscriptionWaiters.push({ count, resolve }));
@@ -468,10 +471,7 @@ export class FakeOmpSession implements OmpRuntimeSession {
     this.handoffRequests.push(customInstructions ? { customInstructions } : {});
   }
 
-  respondToExtensionUiRequest(
-    id: string,
-    response: { value?: string; confirmed?: boolean; cancelled?: boolean },
-  ): void {
+  respondToExtensionUiRequest(id: string, response: OmpExtensionUiResponse): void {
     this.extensionUiResponses.push({ id, response });
   }
 

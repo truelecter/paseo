@@ -469,6 +469,28 @@ export const OmpAvailableCommandsUpdateEventSchema = z
   })
   .passthrough();
 
+// One question of OMP's `ask` dialog request (`method: "ask"`), sent only after
+// `set_ask_dialog` enables it. OMP adds no "Other" option; hosts always offer free text.
+export const OmpAskDialogQuestionSchema = z
+  .object({
+    id: z.string(),
+    question: z.string(),
+    header: z.string().optional(),
+    options: z.array(
+      z
+        .object({
+          label: z.string(),
+          description: z.string().optional(),
+          preview: z.string().optional(),
+        })
+        .passthrough(),
+    ),
+    multi: z.boolean().optional(),
+    recommended: z.number().optional(),
+  })
+  .passthrough();
+export const OmpAskDialogQuestionsSchema = z.array(OmpAskDialogQuestionSchema).min(1);
+
 const OmpExtensionUiRequestSchema = z
   .object({
     type: z.literal("extension_ui_request"),
@@ -482,6 +504,9 @@ const OmpExtensionUiRequestSchema = z
     url: z.string().optional(),
     launchUrl: z.string().optional(),
     instructions: z.string().optional(),
+    // Parsed with OmpAskDialogQuestionSchema by the question UI, so one malformed
+    // question cancels the ask instead of dropping the whole frame.
+    questions: z.unknown().optional(),
   })
   .passthrough();
 const OmpSubagentLifecycleEventSchema = z
@@ -585,6 +610,7 @@ export const OmpRpcCommandSchema = z.discriminatedUnion("type", [
     type: z.literal("set_subagent_subscription"),
     level: OmpSubagentSubscriptionLevelSchema,
   }),
+  z.object({ ...OmpCommandBase, type: z.literal("set_ask_dialog"), enabled: z.boolean() }),
   z.object({
     ...OmpCommandBase,
     type: z.literal("set_host_tools"),
@@ -643,6 +669,14 @@ export type OmpRpcHostToolUpdate = z.infer<typeof OmpRpcHostToolUpdateSchema>;
 export type OmpRpcHostToolResult = z.infer<typeof OmpRpcHostToolResultSchema>;
 export type OmpSubagentSubscriptionLevel = z.infer<typeof OmpSubagentSubscriptionLevelSchema>;
 export type OmpSubagentStatus = z.infer<typeof OmpSubagentStatusSchema>;
+export type OmpAskDialogQuestion = z.infer<typeof OmpAskDialogQuestionSchema>;
+/** Body of an `extension_ui_response`; `answers` replies to an `ask` dialog, one per question in order. */
+export interface OmpExtensionUiResponse {
+  value?: string;
+  confirmed?: boolean;
+  cancelled?: boolean;
+  answers?: Array<{ id: string; selectedOptions: string[]; customInput?: string }>;
+}
 export type OmpSubagentLifecyclePayload = z.infer<typeof OmpSubagentLifecyclePayloadSchema>;
 export type OmpSubagentProgressPayload = z.infer<typeof OmpSubagentProgressPayloadSchema>;
 export type OmpSubagentEventPayload = z.infer<typeof OmpSubagentEventPayloadSchema>;
