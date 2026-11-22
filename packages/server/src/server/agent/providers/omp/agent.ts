@@ -780,6 +780,10 @@ export class OmpAgentSession implements AgentSession {
         this.logger.debug({ err: progressError }, "OMP subagent progress subscription unavailable");
       });
     });
+    // Older OMP builds reject `set_ask_dialog` and keep asking one select at a time.
+    void runtime.setAskDialog(true).catch((error: unknown) => {
+      this.logger.debug({ err: error }, "OMP ask dialog unavailable");
+    });
   }
 
   private runtimeSession: OmpRuntimeSession;
