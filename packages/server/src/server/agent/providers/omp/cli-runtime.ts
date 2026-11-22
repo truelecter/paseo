@@ -242,6 +242,10 @@ class OmpCliRuntimeSession implements OmpRuntimeSession {
     await this.request({ type: "set_subagent_subscription", level });
   }
 
+  async setAskDialog(enabled: boolean): Promise<void> {
+    await this.request({ type: "set_ask_dialog", enabled });
+  }
+
   async setHostTools(tools: OmpRpcHostToolDefinition[]): Promise<string[]> {
     const data = OmpHostToolsResultSchema.parse(
       await this.request({ type: "set_host_tools", tools }),
