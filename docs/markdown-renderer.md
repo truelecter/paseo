@@ -36,6 +36,7 @@ Some fork changes are backports. A sync past the upstream version drops them in 
 | ----------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------ | ---------------------------------------- |
 | Android measurements survive parent clones                        | [#924](https://github.com/software-mansion/enriched-markdown/pull/924)                                                                                       | after `1.2.0-nightly-20261019-926ef06f0` |
 | Android nested list items start their text after their own marker | [#1015](https://github.com/software-mansion/enriched-markdown/pull/1015), [#1023](https://github.com/software-mansion/enriched-markdown/pull/1023) (Android) | `1.2.0`                                  |
+| Android long-press drag selection keeps scrolling parents out     | [#1012](https://github.com/software-mansion/enriched-markdown/pull/1012)                                                                                     | `1.2.0`                                  |
 
 ## Engine constraints
 
