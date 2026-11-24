@@ -1,0 +1,28 @@
+name: Pin local in ai.nix
+
+# Fork only. Every push of `local` asks truelecter/ai.nix to update its `paseo` flake input: its
+# flake-lock workflow opens a pull request on `auto/update-paseo` that merges itself once the
+# plugin end-to-end suite passes there. AI_NIX_DISPATCH_TOKEN is a fine-grained token with only
+# Actions: write on truelecter/ai.nix.
+
+on:
+  push:
+    branches: [local]
+  workflow_dispatch:
+
+concurrency:
+  group: ai-nix-pin
+  cancel-in-progress: true
+
+permissions: {}
+
+jobs:
+  dispatch:
+    if: github.repository == 'truelecter/paseo'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Dispatch the ai.nix flake-lock workflow
+        run: gh workflow run flake-lock.yaml --repo truelecter/ai.nix --ref main -f input=paseo
+        env:
+          GH_TOKEN: ${{ secrets.AI_NIX_DISPATCH_TOKEN }}
